@@ -2,8 +2,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.HID;
-using UnityEngine.InputSystem.Utilities;
 using UnityEngine.Tilemaps;
 
 public class InputManager : MonoBehaviour
@@ -11,10 +9,22 @@ public class InputManager : MonoBehaviour
     private InputAction tapAction;
     private InputAction positionAction;
 
+    [Header("Tilemaps")]
     [SerializeField] private Tilemap groundTileMap;
+    [SerializeField] private Tilemap buildingTileMap;
+
+    [SerializeField] private MiningSystem miningSystem;
+
+    [Header("Placement")]
+    public bool isPlacing;
+    public Tile selectedBuildingTile;
+
+    private Camera cam;
 
     private void Awake()
     {
+        cam = Camera.main;
+
         tapAction = new InputAction(
             name: "Tap",
             type: InputActionType.Button,
@@ -33,7 +43,6 @@ public class InputManager : MonoBehaviour
     {
         tapAction.performed += OnTapPerformed;
         tapAction.Enable();
-
         positionAction.Enable();
     }
 
@@ -41,7 +50,6 @@ public class InputManager : MonoBehaviour
     {
         tapAction.performed -= OnTapPerformed;
         tapAction.Disable();
-
         positionAction.Disable();
     }
 
@@ -54,52 +62,115 @@ public class InputManager : MonoBehaviour
     private void OnTapPerformed(InputAction.CallbackContext ctx)
     {
         Vector2 screenPos = positionAction.ReadValue<Vector2>();
-        HandlePointerAt(screenPos);
+        HandleTap(screenPos);
     }
 
-    private void HandlePointerAt(Vector2 screenPosition)
+    private void HandleTap(Vector2 screenPosition)
     {
-        Camera cam = Camera.main;
-        if (cam != null)
+        if (cam == null)
+            return;
+
+        // Ignore UI taps
+        if (IsPointerOverUI(screenPosition))
+            return;
+
+        Vector3 worldPoint = cam.ScreenToWorldPoint(
+            new Vector3(screenPosition.x, screenPosition.y, Mathf.Abs(cam.transform.position.z))
+        );
+
+        Vector3Int cellPos = groundTileMap.WorldToCell(worldPoint);
+
+        if (isPlacing)
         {
-            float distance = Mathf.Abs(cam.transform.position.z - groundTileMap.transform.position.z);
-            Vector3 worldPoint = cam.ScreenToWorldPoint(new Vector3(screenPosition.x, screenPosition.y, distance));
-            Vector3Int cellPos = groundTileMap.WorldToCell(worldPoint);
-
-            TileBase tile = groundTileMap.GetTile(cellPos);
-
-            if (tile != null)
-            {
-                Debug.Log($"Tile clicked at {cellPos}: {tile.name}");
-
-                // Try cast to ResourceTile
-                if (tile is ResourceTile resTile)
-                {
-                    InventoryManager.instance.AddItem(resTile.itemToGive, resTile.amount);
-                }
-
-                return;
-            }
+            TryPlaceBuilding(cellPos);
         }
-
-        // UI raycast fallback (optional)
-        if (EventSystem.current != null)
+        else
         {
-            PointerEventData pointerData = new PointerEventData(EventSystem.current)
-            {
-                position = screenPosition
-            };
-
-            List<RaycastResult> results = new List<RaycastResult>();
-            EventSystem.current.RaycastAll(pointerData, results);
-            if (results.Count > 0)
-            {
-                Debug.Log(results[0].gameObject.name);
-                return;
-            }
+            TryHarvest(cellPos);
         }
-
-        Debug.Log($"No GameObject or Tile hit at {screenPosition}");
     }
 
+    #region Placement
+
+    private void TryPlaceBuilding(Vector3Int cellPos)
+    {
+        if (selectedBuildingTile == null)
+            return;
+
+        // Don't place if something already exists
+        if (buildingTileMap.GetTile(cellPos) != null)
+            return;
+
+        // Optional: only allow placement on valid ground
+        if (groundTileMap.GetTile(cellPos) == null)
+            return;
+
+        // Place the tile
+        buildingTileMap.SetTile(cellPos, selectedBuildingTile);
+
+        Debug.Log($"Placed {selectedBuildingTile.name} at {cellPos}");
+
+        // Check if it's a MiningDrillTile and register it
+        if (selectedBuildingTile is MiningDrillTile)
+        {
+            if (miningSystem != null)
+                miningSystem.RegisterDrill(cellPos);
+        }
+    }
+
+
+    #endregion
+
+    #region Harvesting
+
+    private void TryHarvest(Vector3Int cellPos)
+    {
+        TileBase tile = groundTileMap.GetTile(cellPos);
+        if (tile == null)
+            return;
+
+        if (tile is ResourceTile resTile)
+        {
+            InventoryManager.instance.AddItem(
+                resTile.itemToGive,
+                resTile.amount
+            );
+
+            Debug.Log($"Harvested {resTile.name} at {cellPos}");
+        }
+    }
+
+    #endregion
+
+    #region UI
+
+    private bool IsPointerOverUI(Vector2 screenPosition)
+    {
+        if (EventSystem.current == null)
+            return false;
+
+        PointerEventData pointerData = new PointerEventData(EventSystem.current)
+        {
+            position = screenPosition
+        };
+
+        List<RaycastResult> results = new List<RaycastResult>();
+        EventSystem.current.RaycastAll(pointerData, results);
+        return results.Count > 0;
+    }
+
+    #endregion
+
+    // Called by UI buttons
+    public void StartPlacing(Tile buildingTile)
+    {
+        selectedBuildingTile = buildingTile;
+        isPlacing = true;
+    }
+
+    public void CancelPlacing()
+    {
+        isPlacing = false;
+        selectedBuildingTile = null;
+    }
 }
