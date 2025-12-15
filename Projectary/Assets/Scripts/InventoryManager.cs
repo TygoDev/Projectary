@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class InventoryManager : MonoBehaviour
@@ -7,6 +8,7 @@ public class InventoryManager : MonoBehaviour
     public static InventoryManager instance;
 
     public List<InventoryItem> items = new List<InventoryItem>();
+    public event Action OnInventoryChanged;
 
     private void Awake()
     {
@@ -29,7 +31,7 @@ public class InventoryManager : MonoBehaviour
             if (stack.item == itemSO)
             {
                 stack.quantity += amount;
-                Debug.Log($"Added {amount} to {itemSO.itemID} (total {stack.quantity})");
+                OnInventoryChanged?.Invoke();
                 return;
             }
         }
@@ -37,8 +39,7 @@ public class InventoryManager : MonoBehaviour
         // No stack existed → create new one
         InventoryItem newStack = new InventoryItem(itemSO, amount);
         items.Add(newStack);
-
-        Debug.Log($"Created new stack {itemSO.itemID} with quantity {amount}");
+        OnInventoryChanged?.Invoke();
     }
 
     public int Count(ItemSO itemSO)
