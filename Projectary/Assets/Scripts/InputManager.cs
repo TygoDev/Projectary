@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -27,6 +27,8 @@ public class InputManager : MonoBehaviour
     private Camera cam;
     private Vector3Int previewCellPos;
     private bool hasPreview;
+
+    private int rotationIndex; // 0,1,2,3 → 0°,90°,180°,270°
 
     #region Unity Lifecycle
 
@@ -122,9 +124,14 @@ public class InputManager : MonoBehaviour
             return;
 
         if (hasPreview)
+        {
             previewTileMap.SetTile(previewCellPos, null);
+            previewTileMap.SetTransformMatrix(previewCellPos, Matrix4x4.identity);
+        }
 
         previewTileMap.SetTile(cellPos, selectedBuildingTile);
+        previewTileMap.SetTransformMatrix(cellPos, GetRotationMatrix());
+
         previewCellPos = cellPos;
         hasPreview = true;
 
@@ -149,6 +156,7 @@ public class InputManager : MonoBehaviour
             return;
 
         buildingTileMap.SetTile(previewCellPos, selectedBuildingTile);
+        buildingTileMap.SetTransformMatrix(previewCellPos, GetRotationMatrix());
 
         if (selectedBuildingTile is MiningDrillTile && miningSystem != null)
             miningSystem.RegisterDrill(previewCellPos);
@@ -162,6 +170,7 @@ public class InputManager : MonoBehaviour
         ClearPreview();
         isPlacing = false;
         selectedBuildingTile = null;
+        rotationIndex = 0;
 
         if (placementCanvas != null)
             placementCanvas.gameObject.SetActive(false);
@@ -173,10 +182,41 @@ public class InputManager : MonoBehaviour
             return;
 
         previewTileMap.SetTile(previewCellPos, null);
+        previewTileMap.SetTransformMatrix(previewCellPos, Matrix4x4.identity);
         hasPreview = false;
 
         if (placementCanvas != null)
             placementCanvas.gameObject.SetActive(false);
+    }
+
+    #endregion
+
+    #region Rotation
+
+    public void RotateRight()
+    {
+        rotationIndex = (rotationIndex + 1) % 4;
+        ApplyRotationToPreview();
+    }
+
+    public void RotateLeft()
+    {
+        rotationIndex = (rotationIndex + 3) % 4;
+        ApplyRotationToPreview();
+    }
+
+    private void ApplyRotationToPreview()
+    {
+        if (!hasPreview)
+            return;
+
+        previewTileMap.SetTransformMatrix(previewCellPos, GetRotationMatrix());
+    }
+
+    private Matrix4x4 GetRotationMatrix()
+    {
+        Quaternion rotation = Quaternion.Euler(0f, 0f, -90f * rotationIndex);
+        return Matrix4x4.TRS(Vector3.zero, rotation, Vector3.one);
     }
 
     #endregion
@@ -225,6 +265,7 @@ public class InputManager : MonoBehaviour
     {
         selectedBuildingTile = buildingTile;
         isPlacing = true;
+        rotationIndex = 0;
     }
 
     #endregion
