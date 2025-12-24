@@ -4,8 +4,13 @@ using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.Tilemaps;
 
+/// <summary>
+/// Handles touch input for harvesting and tile placement with a preview.
+/// Refactored for clarity, small allocations reduction and bug fixes (duplicate preview clear).
+/// </summary>
 public class InputManager : MonoBehaviour
 {
+    // Input actions
     private InputAction tapAction;
     private InputAction positionAction;
 
@@ -24,17 +29,71 @@ public class InputManager : MonoBehaviour
     public bool isPlacing;
     public Tile selectedBuildingTile;
 
-    private Camera cam;
+    private Camera mainCamera;
     private Vector3Int previewCellPos;
     private bool hasPreview;
 
-    private int rotationIndex; // 0,1,2,3 → 0°,90°,180°,270°
+    private int rotationIndex; // 0..3 -> 0°, 90°, 180°, 270°
+
+    // Reusable list to avoid allocating on every UI raycast
+    private static readonly List<RaycastResult> s_RaycastResults = new List<RaycastResult>();
 
     #region Unity Lifecycle
 
     private void Awake()
     {
-        cam = Camera.main;
+        mainCamera = Camera.main;
+
+        CreateInputActions();
+
+        if (placementCanvas != null)
+            placementCanvas.gameObject.SetActive(false);
+    }
+
+    private void OnEnable()
+    {
+        if (tapAction != null)
+        {
+            tapAction.performed += OnTapPerformed;
+            tapAction.Enable();
+        }
+
+        positionAction?.Enable();
+    }
+
+    private void OnDisable()
+    {
+        if (tapAction != null)
+        {
+            tapAction.performed -= OnTapPerformed;
+            tapAction.Disable();
+        }
+
+        positionAction?.Disable();
+    }
+
+    private void OnDestroy()
+    {
+        tapAction?.Dispose();
+        positionAction?.Dispose();
+    }
+
+    private void OnValidate()
+    {
+        // keep reference up-to-date in editor when possible
+        if (Application.isPlaying == false)
+            mainCamera = Camera.main;
+    }
+
+    #endregion
+
+    #region Input
+
+    private void CreateInputActions()
+    {
+        // Only create actions once
+        if (tapAction != null && positionAction != null)
+            return;
 
         tapAction = new InputAction(
             name: "Tap",
@@ -48,64 +107,38 @@ public class InputManager : MonoBehaviour
             type: InputActionType.Value,
             binding: "<Touchscreen>/primaryTouch/position"
         );
-
-        if (placementCanvas != null)
-            placementCanvas.gameObject.SetActive(false);
     }
-
-    private void OnEnable()
-    {
-        tapAction.performed += OnTapPerformed;
-        tapAction.Enable();
-        positionAction.Enable();
-    }
-
-    private void OnDisable()
-    {
-        tapAction.performed -= OnTapPerformed;
-        tapAction.Disable();
-        positionAction.Disable();
-    }
-
-    private void OnDestroy()
-    {
-        tapAction.Dispose();
-        positionAction.Dispose();
-    }
-
-    private void Start()
-    {
-        StartPlacing(selectedBuildingTile);
-    }
-
-    #endregion
-
-    #region Input Handling
 
     private void OnTapPerformed(InputAction.CallbackContext ctx)
     {
-        Vector2 screenPos = positionAction.ReadValue<Vector2>();
+        Vector2 screenPos = positionAction != null ? positionAction.ReadValue<Vector2>() : Vector2.zero;
         HandleTap(screenPos);
     }
 
     private void HandleTap(Vector2 screenPosition)
     {
-        if (cam == null)
+        if (mainCamera == null)
             return;
 
         if (IsPointerOverUI(screenPosition))
             return;
 
-        Vector3 worldPoint = cam.ScreenToWorldPoint(
-            new Vector3(screenPosition.x, screenPosition.y, Mathf.Abs(cam.transform.position.z))
-        );
-
-        Vector3Int cellPos = groundTileMap.WorldToCell(worldPoint);
+        if (!TryGetCellFromScreen(screenPosition, out Vector3Int cellPos))
+            return;
 
         if (isPlacing)
             UpdatePreview(cellPos);
         else
             TryHarvest(cellPos);
+    }
+
+    private bool TryGetCellFromScreen(Vector2 screenPosition, out Vector3Int cell)
+    {
+        // Use camera z distance to convert screen to world (same approach as original)
+        float zDistance = Mathf.Abs(mainCamera.transform.position.z);
+        Vector3 worldPoint = mainCamera.ScreenToWorldPoint(new Vector3(screenPosition.x, screenPosition.y, zDistance));
+        cell = groundTileMap.WorldToCell(worldPoint);
+        return true;
     }
 
     #endregion
@@ -117,18 +150,20 @@ public class InputManager : MonoBehaviour
         if (selectedBuildingTile == null)
             return;
 
+        if (groundTileMap == null || buildingTileMap == null || previewTileMap == null)
+            return;
+
         if (groundTileMap.GetTile(cellPos) == null)
             return;
 
         if (buildingTileMap.GetTile(cellPos) != null)
             return;
 
-        if (hasPreview)
-        {
-            previewTileMap.SetTile(previewCellPos, null);
-            previewTileMap.SetTransformMatrix(previewCellPos, Matrix4x4.identity);
-        }
+        // Clear previous preview if different cell
+        if (hasPreview && previewCellPos != cellPos)
+            ClearPreviewInternal();
 
+        // Set new preview
         previewTileMap.SetTile(cellPos, selectedBuildingTile);
         previewTileMap.SetTransformMatrix(cellPos, GetRotationMatrix());
 
@@ -140,7 +175,7 @@ public class InputManager : MonoBehaviour
 
     private void UpdatePlacementCanvasPosition()
     {
-        if (!hasPreview || placementCanvas == null)
+        if (!hasPreview || placementCanvas == null || previewTileMap == null)
             return;
 
         Vector3 tileWorldPos = previewTileMap.CellToWorld(previewCellPos);
@@ -152,22 +187,25 @@ public class InputManager : MonoBehaviour
 
     public void ConfirmPlacement()
     {
-        if (!hasPreview)
+        if (!hasPreview || buildingTileMap == null)
             return;
 
+        // Place into building tilemap with rotation
         buildingTileMap.SetTile(previewCellPos, selectedBuildingTile);
         buildingTileMap.SetTransformMatrix(previewCellPos, GetRotationMatrix());
 
         if (selectedBuildingTile is MiningDrillTile && miningSystem != null)
             miningSystem.RegisterDrill(previewCellPos);
 
-        ClearPreview();
+        // Finalize and reset placing state (CancelPlacing will clear preview once)
         CancelPlacing();
     }
 
     public void CancelPlacing()
     {
-        ClearPreview();
+        // Clear any preview and reset placing state
+        ClearPreviewInternal();
+
         isPlacing = false;
         selectedBuildingTile = null;
         rotationIndex = 0;
@@ -176,9 +214,9 @@ public class InputManager : MonoBehaviour
             placementCanvas.gameObject.SetActive(false);
     }
 
-    private void ClearPreview()
+    private void ClearPreviewInternal()
     {
-        if (!hasPreview)
+        if (!hasPreview || previewTileMap == null)
             return;
 
         previewTileMap.SetTile(previewCellPos, null);
@@ -207,7 +245,7 @@ public class InputManager : MonoBehaviour
 
     private void ApplyRotationToPreview()
     {
-        if (!hasPreview)
+        if (!hasPreview || previewTileMap == null)
             return;
 
         previewTileMap.SetTransformMatrix(previewCellPos, GetRotationMatrix());
@@ -225,16 +263,16 @@ public class InputManager : MonoBehaviour
 
     private void TryHarvest(Vector3Int cellPos)
     {
+        if (groundTileMap == null)
+            return;
+
         TileBase tile = groundTileMap.GetTile(cellPos);
         if (tile == null)
             return;
 
         if (tile is ResourceTile resTile)
         {
-            InventoryManager.instance.AddItem(
-                resTile.itemToGive,
-                resTile.amount
-            );
+            InventoryManager.Instance.AddItem(resTile.itemToGive, resTile.amount);
         }
     }
 
@@ -247,14 +285,11 @@ public class InputManager : MonoBehaviour
         if (EventSystem.current == null)
             return false;
 
-        PointerEventData pointerData = new PointerEventData(EventSystem.current)
-        {
-            position = screenPosition
-        };
+        var pointerData = new PointerEventData(EventSystem.current) { position = screenPosition };
 
-        List<RaycastResult> results = new List<RaycastResult>();
-        EventSystem.current.RaycastAll(pointerData, results);
-        return results.Count > 0;
+        s_RaycastResults.Clear();
+        EventSystem.current.RaycastAll(pointerData, s_RaycastResults);
+        return s_RaycastResults.Count > 0;
     }
 
     #endregion

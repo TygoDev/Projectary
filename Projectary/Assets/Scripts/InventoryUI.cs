@@ -32,7 +32,7 @@ public class InventoryUI : MonoBehaviour
             Destroy(child.gameObject);
 
         // Create UI slots
-        foreach (var stack in inventory.items)
+        foreach (var stack in inventory.Items)
         {
             GameObject obj = Instantiate(slotPrefab, slotParent);
             UIInventorySlot slot = obj.GetComponent<UIInventorySlot>();
