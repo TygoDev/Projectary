@@ -12,14 +12,23 @@ public class InputManager : MonoBehaviour
     [Header("Tilemaps")]
     [SerializeField] private Tilemap groundTileMap;
     [SerializeField] private Tilemap buildingTileMap;
+    [SerializeField] private Tilemap previewTileMap;
 
     [SerializeField] private MiningSystem miningSystem;
 
-    [Header("Placement")]
+    [Header("Placement UI (World Space)")]
+    [SerializeField] private Canvas placementCanvas;
+    [SerializeField] private Vector3 canvasWorldOffset = new Vector3(0f, -0.6f, 0f);
+
+    [Header("Placement State")]
     public bool isPlacing;
     public Tile selectedBuildingTile;
 
     private Camera cam;
+    private Vector3Int previewCellPos;
+    private bool hasPreview;
+
+    #region Unity Lifecycle
 
     private void Awake()
     {
@@ -37,6 +46,9 @@ public class InputManager : MonoBehaviour
             type: InputActionType.Value,
             binding: "<Touchscreen>/primaryTouch/position"
         );
+
+        if (placementCanvas != null)
+            placementCanvas.gameObject.SetActive(false);
     }
 
     private void OnEnable()
@@ -59,6 +71,15 @@ public class InputManager : MonoBehaviour
         positionAction.Dispose();
     }
 
+    private void Start()
+    {
+        StartPlacing(selectedBuildingTile);
+    }
+
+    #endregion
+
+    #region Input Handling
+
     private void OnTapPerformed(InputAction.CallbackContext ctx)
     {
         Vector2 screenPos = positionAction.ReadValue<Vector2>();
@@ -70,7 +91,6 @@ public class InputManager : MonoBehaviour
         if (cam == null)
             return;
 
-        // Ignore UI taps
         if (IsPointerOverUI(screenPosition))
             return;
 
@@ -81,43 +101,83 @@ public class InputManager : MonoBehaviour
         Vector3Int cellPos = groundTileMap.WorldToCell(worldPoint);
 
         if (isPlacing)
-        {
-            TryPlaceBuilding(cellPos);
-        }
+            UpdatePreview(cellPos);
         else
-        {
             TryHarvest(cellPos);
-        }
     }
 
-    #region Placement
+    #endregion
 
-    private void TryPlaceBuilding(Vector3Int cellPos)
+    #region Placement Preview
+
+    private void UpdatePreview(Vector3Int cellPos)
     {
         if (selectedBuildingTile == null)
             return;
 
-        // Don't place if something already exists
-        if (buildingTileMap.GetTile(cellPos) != null)
-            return;
-
-        // Optional: only allow placement on valid ground
         if (groundTileMap.GetTile(cellPos) == null)
             return;
 
-        // Place the tile
-        buildingTileMap.SetTile(cellPos, selectedBuildingTile);
+        if (buildingTileMap.GetTile(cellPos) != null)
+            return;
 
-        Debug.Log($"Placed {selectedBuildingTile.name} at {cellPos}");
+        if (hasPreview)
+            previewTileMap.SetTile(previewCellPos, null);
 
-        // Check if it's a MiningDrillTile and register it
-        if (selectedBuildingTile is MiningDrillTile)
-        {
-            if (miningSystem != null)
-                miningSystem.RegisterDrill(cellPos);
-        }
+        previewTileMap.SetTile(cellPos, selectedBuildingTile);
+        previewCellPos = cellPos;
+        hasPreview = true;
+
+        UpdatePlacementCanvasPosition();
     }
 
+    private void UpdatePlacementCanvasPosition()
+    {
+        if (!hasPreview || placementCanvas == null)
+            return;
+
+        Vector3 tileWorldPos = previewTileMap.CellToWorld(previewCellPos);
+        tileWorldPos += previewTileMap.cellSize / 2f;
+
+        placementCanvas.transform.position = tileWorldPos + canvasWorldOffset;
+        placementCanvas.gameObject.SetActive(true);
+    }
+
+    public void ConfirmPlacement()
+    {
+        if (!hasPreview)
+            return;
+
+        buildingTileMap.SetTile(previewCellPos, selectedBuildingTile);
+
+        if (selectedBuildingTile is MiningDrillTile && miningSystem != null)
+            miningSystem.RegisterDrill(previewCellPos);
+
+        ClearPreview();
+        CancelPlacing();
+    }
+
+    public void CancelPlacing()
+    {
+        ClearPreview();
+        isPlacing = false;
+        selectedBuildingTile = null;
+
+        if (placementCanvas != null)
+            placementCanvas.gameObject.SetActive(false);
+    }
+
+    private void ClearPreview()
+    {
+        if (!hasPreview)
+            return;
+
+        previewTileMap.SetTile(previewCellPos, null);
+        hasPreview = false;
+
+        if (placementCanvas != null)
+            placementCanvas.gameObject.SetActive(false);
+    }
 
     #endregion
 
@@ -135,14 +195,12 @@ public class InputManager : MonoBehaviour
                 resTile.itemToGive,
                 resTile.amount
             );
-
-            Debug.Log($"Harvested {resTile.name} at {cellPos}");
         }
     }
 
     #endregion
 
-    #region UI
+    #region UI Helpers
 
     private bool IsPointerOverUI(Vector2 screenPosition)
     {
@@ -161,16 +219,13 @@ public class InputManager : MonoBehaviour
 
     #endregion
 
-    // Called by UI buttons
+    #region UI Buttons
+
     public void StartPlacing(Tile buildingTile)
     {
         selectedBuildingTile = buildingTile;
         isPlacing = true;
     }
 
-    public void CancelPlacing()
-    {
-        isPlacing = false;
-        selectedBuildingTile = null;
-    }
+    #endregion
 }

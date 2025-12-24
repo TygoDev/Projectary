@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 566e6e04911792343bbde3b3cb227a0e, type: 3}
   m_Name: Mining Drill
   m_EditorClassIdentifier: Assembly-CSharp::MiningDrillTile
-  m_Sprite: {fileID: 0}
+  m_Sprite: {fileID: 3696108880767659098, guid: d4215dc6560e93f4da0f1c76912da063, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_Transform:
     e00: 1

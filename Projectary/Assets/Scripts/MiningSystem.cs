@@ -67,6 +67,8 @@ public class MiningSystem : MonoBehaviour
             if (timer >= drill.interval)
             {
                 timer = 0f;
+
+                // Replace to check for connected belts, etc. in future.
                 if (InventoryManager.instance != null)
                     InventoryManager.instance.AddItem(resource.itemToGive, resource.amount);
             }
